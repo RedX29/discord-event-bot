@@ -30,6 +30,9 @@ client.once('ready', () => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+  // <-- Add this to log every incoming slash command
+  console.log('🔔 Interaction received:', interaction.commandName);
+
   if (!interaction.isChatInputCommand()) return;
   const { commandName, options } = interaction;
 
@@ -58,7 +61,7 @@ client.on(Events.InteractionCreate, async interaction => {
     await channel.send(
       `@everyone\n` +
       `🎉 THE EVENT HAS STARTED 🎉\n` +
-      `The event will end ${discordTimestamp} so, don’t forget to participate before the deadline..`
+      `The event will end ${discordTimestamp} so, don’t forget to participate before the deadline.`
     );
 
     await interaction.reply({ content: '✅ Done! 🎉', ephemeral: true });
@@ -95,6 +98,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }, duration * 60 * 1000);
 
   } else if (commandName === 'endevent') {
+    console.log('🔔 endevent called');
     if (!activeEvent) {
       return interaction.reply({ content: '⚠️ No active event to end.', ephemeral: true });
     }
@@ -115,6 +119,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
   } else if (commandName === 'rerollwinner') {
+    console.log('🔔 rerollwinner called');
     if (!activeEvent) {
       return interaction.reply({ content: '⚠️ No event data to reroll.', ephemeral: true });
     }
