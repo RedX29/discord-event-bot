@@ -1,3 +1,17 @@
+// UptimeRobot web server setup
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Bot is alive!');
+});
+
+app.listen(port, () => {
+  console.log(`🌐 Uptime monitor active on port ${port}`);
+});
+
+// Discord bot code
 const { Client, GatewayIntentBits, Events, ChannelType } = require('discord.js');
 require('dotenv').config();
 
@@ -41,17 +55,14 @@ client.on(Events.InteractionCreate, async interaction => {
       timeout: null
     };
 
-    // Public announcement with real @everyone ping
     await channel.send(
       `@everyone\n` +
       `🎉 THE EVENT HAS STARTED 🎉\n` +
       `The event will end ${discordTimestamp} so, don’t forget to participate before the deadline..`
     );
 
-    // Private confirmation
     await interaction.reply({ content: '✅ Done! 🎉', ephemeral: true });
 
-    // Schedule end
     activeEvent.timeout = setTimeout(async () => {
       const { channel, participants, winnersCount, prize } = activeEvent;
       activeEvent = null;
@@ -61,7 +72,6 @@ client.on(Events.InteractionCreate, async interaction => {
         return channel.send('😢 Sadly, no one won the event :(');
       }
 
-      // Pick winners
       const picked = [];
       for (let i = 0; i < Math.min(winnersCount, entrants.length); i++) {
         const idx = Math.floor(Math.random() * entrants.length);
@@ -74,7 +84,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await channel.send(msg);
 
-      // Lock channel
       try {
         await channel.permissionOverwrites.edit(
           interaction.guild.roles.everyone,
