@@ -1,20 +1,31 @@
-// UptimeRobot web server setup
+// ─── Auto-create event.json ────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+const EVENT_FILE = path.join(__dirname, 'event.json');
+if (!fs.existsSync(EVENT_FILE)) {
+  const defaultEvent = {
+    active: false,
+    channelId: null,
+    endTime: null,
+    winnersCount: 1,
+    prize: null,
+    participants: {},        // userId -> entryCount
+    guildId: null,
+    multiplierRoleId: null,  // NEW
+    multiplierCount: 1       // NEW
+  };
+  fs.writeFileSync(EVENT_FILE, JSON.stringify(defaultEvent, null, 2));
+}
+// ───────────────────────────────────────────────────────────────────────
+
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bot is alive!'));
+app.listen(port, () => console.log(`🌐 Uptime on port ${port}`));
 
-app.get('/', (req, res) => {
-  res.send('Bot is alive!');
-});
-
-app.listen(port, () => {
-  console.log(`🌐 Uptime monitor active on port ${port}`);
-});
-
-// Discord bot code
 const { Client, GatewayIntentBits, Events, ChannelType } = require('discord.js');
 require('dotenv').config();
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -23,123 +34,213 @@ const client = new Client({
   ]
 });
 
+// ─── Persistence Helpers ──────────────────────────────────────────────
+function loadEvent() {
+  try {
+    return JSON.parse(fs.readFileSync(EVENT_FILE, 'utf-8'));
+  } catch {
+    return { active: false };
+  }
+}
+function saveEvent(data) {
+  fs.writeFileSync(EVENT_FILE, JSON.stringify(data, null, 2));
+}
+// ───────────────────────────────────────────────────────────────────────
+
 let activeEvent = null;
+let eventTimeout = null;
 
-client.once('ready', () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-});
-
-client.on(Events.InteractionCreate, async interaction => {
-  // <-- Add this to log every incoming slash command
-  console.log('🔔 Interaction received:', interaction.commandName);
-
-  if (!interaction.isChatInputCommand()) return;
-  const { commandName, options } = interaction;
-
-  if (commandName === 'startevent') {
-    const duration = options.getInteger('duration');
-    const channel = options.getChannel('channel');
-    const winners = options.getInteger('winners');
-    const prize = options.getString('prize');
-
-    if (!channel || channel.type !== ChannelType.GuildText) {
-      return interaction.reply({ content: '❌ Please select a text channel!', ephemeral: true });
+// ─── End Event Logic ──────────────────────────────────────────────────
+async function endEvent() {
+  if (!activeEvent) return;
+  const {
+    channelId,
+    participants,
+    winnersCount,
+    prize,
+    guildId
+  } = activeEvent;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (channel) {
+    // Build weighted pool
+    const pool = [];
+    for (const [userId, count] of Object.entries(participants)) {
+      for (let i = 0; i < count; i++) pool.push(userId);
     }
 
-    const endTime = Date.now() + duration * 60 * 1000;
-    const discordTimestamp = `<t:${Math.floor(endTime / 1000)}:R>`;
-
-    activeEvent = {
-      channel,
-      endTime,
-      winnersCount: winners,
-      prize,
-      participants: new Set(),
-      timeout: null
-    };
-
-    await channel.send(
-      `@everyone\n` +
-      `🎉 THE EVENT HAS STARTED 🎉\n` +
-      `The event will end ${discordTimestamp} so, don’t forget to participate before the deadline.`
-    );
-
-    await interaction.reply({ content: '✅ Done! 🎉', ephemeral: true });
-
-    activeEvent.timeout = setTimeout(async () => {
-      const { channel, participants, winnersCount, prize } = activeEvent;
-      activeEvent = null;
-
-      const entrants = Array.from(participants);
-      if (entrants.length === 0) {
-        return channel.send('😢 Sadly, no one won the event :(');
-      }
-
+    if (pool.length === 0) {
+      await channel.send('😢 No one joined.');
+    } else {
       const picked = [];
-      for (let i = 0; i < Math.min(winnersCount, entrants.length); i++) {
-        const idx = Math.floor(Math.random() * entrants.length);
-        picked.push(entrants.splice(idx, 1)[0]);
+      for (let i = 0; i < Math.min(winnersCount, pool.length); i++) {
+        const idx = Math.floor(Math.random() * pool.length);
+        picked.push(pool.splice(idx, 1)[0]);
       }
-      const mention = picked.map(id => `<@${id}>`).join(', ');
+      const mention = [...new Set(picked)].map(id => `<@${id}>`).join(', ');
       const msg = picked.length > 1
-        ? `🎊 Congratulations ${mention}! You all won the **${prize}**!! 🥳`
-        : `🎊 Congratulations ${mention}! You won the **${prize}**!! 🥳`;
-
+        ? `🎊 Congrats ${mention}! You all won **${prize}**! 🎉`
+        : `🎊 Congrats ${mention}! You won **${prize}**! 🎉`;
       await channel.send(msg);
-
-      try {
-        await channel.permissionOverwrites.edit(
-          interaction.guild.roles.everyone,
-          { SendMessages: false, ViewChannel: true }
-        );
-      } catch (err) {
-        console.error('Failed to lock channel:', err);
-      }
-    }, duration * 60 * 1000);
-
-  } else if (commandName === 'endevent') {
-    console.log('🔔 endevent called');
-    if (!activeEvent) {
-      return interaction.reply({ content: '⚠️ No active event to end.', ephemeral: true });
     }
-    clearTimeout(activeEvent.timeout);
-    const channel = activeEvent.channel;
-    activeEvent = null;
 
-    await interaction.reply({ content: '✅ Done! 🎉', ephemeral: true });
-    channel.send('⚠️ The event was ended early by an administrator.');
-
+    // Lock channel
     try {
+      const guild = await client.guilds.fetch(guildId);
       await channel.permissionOverwrites.edit(
-        interaction.guild.roles.everyone,
+        guild.roles.everyone,
         { SendMessages: false, ViewChannel: true }
       );
     } catch (err) {
-      console.error('Failed to lock channel:', err);
+      console.error('Lock channel failed:', err);
+    }
+  }
+
+  // reset
+  activeEvent = null;
+  saveEvent({
+    active: false,
+    channelId: null,
+    endTime: null,
+    winnersCount: 1,
+    prize: null,
+    participants: {},
+    guildId: null,
+    multiplierRoleId: null,
+    multiplierCount: 1
+  });
+  eventTimeout = null;
+}
+
+function setupEventTimeout() {
+  if (!activeEvent) return;
+  const msLeft = activeEvent.endTime - Date.now();
+  if (msLeft <= 0) return endEvent();
+  if (eventTimeout) clearTimeout(eventTimeout);
+  eventTimeout = setTimeout(endEvent, msLeft);
+}
+// ───────────────────────────────────────────────────────────────────────
+
+client.once('ready', () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // resume any in-flight event
+  const saved = loadEvent();
+  if (saved.active) {
+    activeEvent = {
+      channelId: saved.channelId,
+      endTime: saved.endTime,
+      winnersCount: saved.winnersCount,
+      prize: saved.prize,
+      participants: saved.participants,      // object
+      guildId: saved.guildId,
+      multiplierRoleId: saved.multiplierRoleId,
+      multiplierCount: saved.multiplierCount
+    };
+    console.log(
+      `🔔 Resuming event in #${activeEvent.channelId}, ends at ${new Date(activeEvent.endTime).toLocaleString()}`
+    );
+    setupEventTimeout();
+  }
+});
+
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  const { commandName, options, guildId } = interaction;
+
+  if (commandName === 'startevent') {
+    if (activeEvent && activeEvent.endTime > Date.now()) {
+      return interaction.reply({ content: '⚠️ Already running!', ephemeral: true });
+    }
+    const duration        = options.getInteger('duration');
+    const channel         = options.getChannel('channel');
+    const winners         = options.getInteger('winners');
+    const prize           = options.getString('prize');
+    const role            = options.getRole('multiplierrole');  // NEW
+    const multiplierCount = options.getInteger('multiplier') || 1; // NEW
+
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      return interaction.reply({ content: '❌ Select a text channel!', ephemeral: true });
     }
 
-  } else if (commandName === 'rerollwinner') {
-    console.log('🔔 rerollwinner called');
+    const endTime = Date.now() + duration * 60000;
+    activeEvent = {
+      channelId: channel.id,
+      endTime,
+      winnersCount: winners,
+      prize,
+      participants: {},       // reset
+      guildId,
+      multiplierRoleId: role?.id ?? null,
+      multiplierCount
+    };
+
+    saveEvent(activeEvent);
+
+    await channel.send(
+      `@everyone\n🎉 EVENT STARTED! 🎉\n` +
+      `Ends <t:${Math.floor(endTime/1000)}:R>\n` +
+      (role
+        ? `Members with the @${role.name} role get **${multiplierCount}×** entries!`
+        : '')
+    );
+    await interaction.reply({ content: '✅ Event started!', ephemeral: true });
+    setupEventTimeout();
+
+  } else if (commandName === 'endevent') {
     if (!activeEvent) {
-      return interaction.reply({ content: '⚠️ No event data to reroll.', ephemeral: true });
+      return interaction.reply({ content: '⚠️ No active event.', ephemeral: true });
     }
-    const entrants = Array.from(activeEvent.participants);
-    if (entrants.length === 0) {
-      return interaction.reply({ content: '⚠️ No participants to reroll.', ephemeral: true });
+    if (eventTimeout) clearTimeout(eventTimeout);
+    await endEvent();
+    return interaction.reply({ content: '✅ Ended early.', ephemeral: true });
+
+  } else if (commandName === 'rerollwinner') {
+    if (!activeEvent) {
+      return interaction.reply({ content: '⚠️ No event to reroll.', ephemeral: true });
     }
-    const idx = Math.floor(Math.random() * entrants.length);
-    const winnerId = entrants[idx];
-    await interaction.reply({ content: `🎉 New winner: <@${winnerId}>!`, ephemeral: true });
+    const pool = [];
+    for (const [userId, count] of Object.entries(activeEvent.participants || {})) {
+      for (let i = 0; i < count; i++) pool.push(userId);
+    }
+    if (pool.length === 0) {
+      return interaction.reply({ content: '⚠️ No participants.', ephemeral: true });
+    }
+    const winner = pool[Math.floor(Math.random() * pool.length)];
+    return interaction.reply({ content: `🎉 New winner: <@${winner}>!`, ephemeral: true });
+
+  } else if (commandName === 'eventinfo') {
+    if (!activeEvent) {
+      return interaction.reply({ content: '⚠️ No active event.', ephemeral: true });
+    }
+    const totalEntries = Object.values(activeEvent.participants).reduce((a, b) => a + b, 0);
+    const uniqueCount  = Object.keys(activeEvent.participants).length;
+    const secsLeft     = Math.max(0, Math.floor((activeEvent.endTime - Date.now()) / 1000));
+    return interaction.reply({
+      content:
+        `👥 Unique participants: **${uniqueCount}**\n` +
+        `🎟️ Total entries: **${totalEntries}**\n` +
+        `⏳ Time left: <t:${Math.floor(Date.now()/1000 + secsLeft)}:R>`,
+      ephemeral: true
+    });
   }
 });
 
 client.on('messageCreate', message => {
   if (
     activeEvent &&
-    message.channel.id === activeEvent.channel.id &&
+    message.channel.id === activeEvent.channelId &&
     !message.author.bot
   ) {
-    activeEvent.participants.add(message.author.id);
+    const id = message.author.id;
+    if (!(id in activeEvent.participants)) {
+      // first-time join: assign 1× or multiplier× entries
+      const hasRole = activeEvent.multiplierRoleId &&
+                      message.member.roles.cache.has(activeEvent.multiplierRoleId);
+      activeEvent.participants[id] = hasRole
+        ? activeEvent.multiplierCount
+        : 1;
+      saveEvent(activeEvent);
+    }
   }
 });
 

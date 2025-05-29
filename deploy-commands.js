@@ -12,7 +12,7 @@ const commands = [
          .setRequired(true))
     .addChannelOption(opt =>
       opt.setName('channel')
-         .setDescription('Channel where the event will be hosted')
+         .setDescription('Text channel for the event')
          .setRequired(true))
     .addIntegerOption(opt =>
       opt.setName('winners')
@@ -22,35 +22,51 @@ const commands = [
       opt.setName('prize')
          .setDescription('What is the prize?')
          .setRequired(true))
-    // Only members who can manage channels can use this
+    // NEW: role whose members get extra entries
+    .addRoleOption(opt =>
+      opt.setName('multiplierrole')
+         .setDescription('Role whose members get extra entries')
+         .setRequired(false))
+    // NEW: how many entries those role-holders get
+    .addIntegerOption(opt =>
+      opt.setName('multiplier')
+         .setDescription('How many entries those members get')
+         .setRequired(false))
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels)
-    .setDMPermission(false),
+    .setDMPermission(false)
+    .toJSON(),
 
   new SlashCommandBuilder()
     .setName('endevent')
     .setDescription('Ends the current event early')
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels)
-    .setDMPermission(false),
+    .setDMPermission(false)
+    .toJSON(),
 
   new SlashCommandBuilder()
     .setName('rerollwinner')
     .setDescription('Reroll a winner from the last event')
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels)
     .setDMPermission(false)
-].map(cmd => cmd.toJSON());
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('eventinfo')
+    .setDescription('Show how many people have participated and time left')
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels)
+    .setDMPermission(false)
+    .toJSON()
+];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
   try {
     console.log('🚀 Registering slash commands to guild…');
-
-    // For instant updates in your test server
     await rest.put(
       Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
       { body: commands }
     );
-
     console.log('✅ Slash commands registered!');
   } catch (err) {
     console.error('❌ Failed to register commands:', err);
