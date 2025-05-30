@@ -56,7 +56,6 @@ client.on(Events.InteractionCreate, async interaction => {
       timeout: null
     };
 
-    // The OLD message exactly as before:
     await channel.send(
       `@everyone\n` +
       `🎉 THE EVENT HAS STARTED 🎉\n` +
@@ -129,6 +128,24 @@ client.on(Events.InteractionCreate, async interaction => {
     const idx = Math.floor(Math.random() * entrants.length);
     const winnerId = entrants[idx];
     await interaction.reply({ content: `🎉 New winner: <@${winnerId}>!`, ephemeral: true });
+
+  } else if (commandName === 'eventinfo') {
+    // New handler for /eventinfo
+    if (!activeEvent) {
+      return interaction.reply({ content: '⚠️ No active event right now.', ephemeral: true });
+    }
+    const timeLeftMs = activeEvent.endTime - Date.now();
+    if (timeLeftMs <= 0) {
+      return interaction.reply({ content: '⚠️ The event has already ended.', ephemeral: true });
+    }
+
+    const minutesLeft = Math.floor(timeLeftMs / 60000);
+    const participantsCount = activeEvent.participants.size;
+
+    await interaction.reply({
+      content: `📊 Event info:\nParticipants: ${participantsCount}\nTime left: ${minutesLeft} minute(s)`,
+      ephemeral: true
+    });
   }
 });
 
